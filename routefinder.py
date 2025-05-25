@@ -5,7 +5,7 @@ import heapq
 import math
 import sys
 from collections import deque
-
+from typing import Dict
 
 # Node class represents a state in our search problem
 # Each node knows its state (node ID), parent node, and path cost from start
@@ -152,6 +152,42 @@ class PathFinder:
                     break
                 except ValueError:
                     continue
+    
+    def set_origin_and_destinations(self, origin_id, destination_ids):
+        """
+        Allows overriding the origin and destination SCATS sites manually.
+        """
+        self.origin = origin_id
+        self.destinations = destination_ids
+
+
+    # routefinder integration with ML models- GRU,LSTM,SVR
+    def apply_predicted_volumes(self, predicted_volumes: Dict[int, float]):
+        """
+        Replace edge costs using predicted volumes from ML models.
+        Formula: travel_time = 0.03 * volume + 0.5
+        """
+        updated_graph = {}
+        for node, neighbors in self.graph.items():
+            new_neighbors = []
+            for neighbor, _ in neighbors:
+                volume = predicted_volumes.get(neighbor, 1000)  # fallback volume
+                # travel_time = 0.03 * volume + 0.5
+                flow = volume
+                distance_km = 1.0  # Assuming 1 km between SCATS sites
+                try:
+                    inner_term = 1 - 0.00066666 * flow
+                    if inner_term <= 0:
+                        speed = 5  # fallback to 5 km/h if negative under sqrt
+                    else:
+                        speed = 32.0001 * (inner_term ** 0.5) + 32.0001
+                    travel_time = (distance_km / speed) * 60 + 0.5  # minutes + 30s delay
+                except:
+                    travel_time = 10.0  # fallback in case of error
+
+                new_neighbors.append((neighbor, travel_time))
+            updated_graph[node] = new_neighbors
+        self.graph = updated_graph
 
     # Reset the node counter for a new search
     def reset_counter(self):
@@ -495,34 +531,3 @@ class PathFinder:
 def check_python_version():
     version = sys.version_info
     print(f"Running Python version: {version.major}.{version.minor}.{version.micro}")
-
-
-# Main function to handle command line arguments and run the program
-def main():
-    # Uncomment the line below if you want to see which Python version you're using
-    # check_python_version()
-
-    if len(sys.argv) != 3:
-        print("Usage: python routefinder.py <filename> <method>")
-        print("   or: python3 routefinder.py <filename> <method>")
-        print("   or: ./routefinder.py <filename> <method> (after running chmod +x routefinder.py)")
-        sys.exit(1)
-
-    filename = sys.argv[1]
-    method = sys.argv[2]
-
-    path_finder = PathFinder(filename)
-    goal, nodes_created, path = path_finder.run_search(method)
-
-    # Print output in the required format
-    if goal is not None:
-        print(f"{filename} {method}")
-        print(f"{goal} {nodes_created}")
-        print(" ".join(map(str, path)))
-    else:
-        print(f"{filename} {method}")
-        print("No solution found")
-
-
-if __name__ == "__main__":
-    main()
