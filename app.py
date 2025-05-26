@@ -1,3 +1,4 @@
+
 import streamlit as st
 from routefinder import PathFinder
 from predicted_volumes_gru import predicted_volumes as gru_volumes
@@ -7,13 +8,15 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import networkx as nx
 import copy
+import pandas as pd
+import numpy as np
 
 st.set_page_config(page_title="Traffic-Based Route Guidance System (TBRGS)")
 st.title("Traffic-Based Route Guidance System (TBRGS)")
 
 st.markdown("""
 Upload a map, select a Machine Learning model, choose a search method,
-and get up to 5 optimal routes with estimated travel times.
+and view the optimal route with estimated travel time and node exploration details.
 """)
 
 map_file = st.file_uploader("Upload Map File (`.txt`)", type=["txt"])
@@ -44,48 +47,30 @@ if map_file is not None:
 
     finder.set_origin_and_destinations(origin, [destination])
 
-    if st.button("Show Routes"):
-        route_limit = 5 if search_method == "as" else 1  # Only A* gets 5 routes
-        count = 0
-        visited_paths = set()
+    if st.button("Show Route"):
+        st.markdown(f"### 🚦 Calculating route from {origin} to {destination} using `{search_method.upper()}` and `{model_choice}` prediction...")
+
         base_graph = copy.deepcopy(finder.graph)
+        goal, created, path = None, 0, []
 
-        st.markdown(f"### 🚦 Calculating route(s) from {origin} to {destination} using `{search_method.upper()}` and `{model_choice}` prediction...")
+        if search_method == "as":
+            goal, created, path = finder.astar()
+        elif search_method == "dfs":
+            goal, created, path = finder.dfs()
+        elif search_method == "bfs":
+            goal, created, path = finder.bfs()
+        elif search_method == "gbfs":
+            goal, created, path = finder.gbfs()
+        elif search_method == "cus1":
+            goal, created, path = finder.ucs()
+        elif search_method == "cus2":
+            goal, created, path = finder.bidirectional_search()
+        else:
+            st.error("Unsupported method.")
 
-        while count < route_limit:
-            finder.graph = copy.deepcopy(base_graph)
-
-            # Increase weights of previous path edges for A* to find alternatives
-            if search_method == "as":
-                for path in visited_paths:
-                    for i in range(len(path) - 1):
-                        for j, (nbr, cost) in enumerate(finder.graph[path[i]]):
-                            if nbr == path[i + 1]:
-                                finder.graph[path[i]][j] = (nbr, cost + 10)
-
-            # Run selected method
-            if search_method == "as":
-                goal, created, path = finder.astar()
-            elif search_method == "dfs":
-                goal, created, path = finder.dfs()
-            elif search_method == "bfs":
-                goal, created, path = finder.bfs()
-            elif search_method == "gbfs":
-                goal, created, path = finder.gbfs()
-            elif search_method == "cus1":
-                goal, created, path = finder.ucs()
-            elif search_method == "cus2":
-                goal, created, path = finder.bidirectional_search()
-            else:
-                st.error("Unsupported method.")
-                break
-
-            if not path or tuple(path) in visited_paths:
-                break
-
-            visited_paths.add(tuple(path))
-
-            # Calculate travel time
+        if not path:
+            st.error("No path found.")
+        else:
             travel_time = 0
             for i in range(len(path) - 1):
                 to_node = path[i + 1]
@@ -98,12 +83,10 @@ if map_file is not None:
                 except:
                     travel_time += 10.0
 
-            st.subheader(f"Route {count + 1}")
-            st.write("Path:", " → ".join(map(str, path)))
-            st.write(f"Estimated Travel Time: {travel_time:.2f} minutes")
-            st.write(f"Nodes Explored: {created}")
+            st.success(f"Path: {' → '.join(map(str, path))}")
+            st.info(f"Estimated Travel Time: {travel_time:.2f} minutes")
+            st.info(f"Nodes Explored: {created}")
 
-            # Visualization
             G = nx.DiGraph()
             for node in finder.graph:
                 for neighbor, cost in finder.graph[node]:
@@ -115,4 +98,25 @@ if map_file is not None:
             nx.draw_networkx_edges(G, pos, edgelist=list(zip(path, path[1:])), edge_color="red", width=3)
             st.pyplot(plt.gcf())
 
-            count += 1
+    # Heatmap toggle
+    if st.checkbox("Show Heatmap of Traffic Zones (from CSV data)"):
+        try:
+            df = pd.read_csv("cleaned_SData_Oct2006.csv")
+            volume_columns = [col for col in df.columns if col.startswith('v') and col[1:].isdigit()]
+            coord_columns = ['nb_latitude', 'nb_longitude']
+            df = df.dropna(subset=coord_columns + volume_columns)
+            df['avg_volume'] = df[volume_columns].mean(axis=1)
+            df_grouped = df.groupby(coord_columns)['avg_volume'].mean().reset_index()
+            heatmap_data = df_grouped[['nb_latitude', 'nb_longitude', 'avg_volume']].values.tolist()
+
+            from folium.plugins import HeatMap
+            import folium
+            from streamlit_folium import st_folium
+
+            avg_lat = np.mean(df_grouped['nb_latitude'])
+            avg_lon = np.mean(df_grouped['nb_longitude'])
+            m = folium.Map(location=[avg_lat, avg_lon], zoom_start=12)
+            HeatMap(heatmap_data, radius=10, blur=6, max_zoom=13).add_to(m)
+            st_folium(m, width=700, height=500)
+        except Exception as e:
+            st.error(f"Heatmap error: {e}")
